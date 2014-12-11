@@ -1,25 +1,206 @@
 ---
-title: "Reproducible Research: Peer Assessment 1"
-output: 
+title: 'Reproducible Research: Peer Assessment 1'
+output:
   html_document:
-    keep_md: true
+    number_sections: yes
+    theme: spacelab
+    toc: yes
 ---
+
+first let's load the libraries we will use.  
+
+```{r}
+library(Hmisc) # used for imputation, should be loaded before 'psych'!
+library(ggplot2) # prettier plots
+library(psych) # describe function
+library(knitr) # tables, mainly
+```
 
 
 ## Loading and preprocessing the data
+
+Let's load the data. We start by 
+
+1. unzipping it, 
+2. reading it and 
+3. having a quick look...
+
+```{r}
+
+unzip('activity.zip')
+data <- read.csv2("activity.csv", sep=",")
+kable(head(data) ,
+      digits = 2 ,
+      caption = "A quick preview of the dataset" ,
+      align="c"
+      )
+
+kable(summary(data) ,
+      digits = 2 ,
+      caption = "Some statistics about our dataset")
+```
+
 
 
 
 ## What is mean total number of steps taken per day?
 
+Now we focus on the steps taken each day. We do so by aggregating the steps by each unique day, using the `aggregate` function.
+
+```{r}
+aggregated_steps <- aggregate(data$steps ,
+                              by = list(data$date) , 
+                              FUN = sum)
+names(aggregated_steps) <- c('date','steps') # Let's keep the naming of columns the same! 
+qplot(aggregated_steps$steps)
+
+```
+
+The `mean` is: 
+
+```{r}
+mean(aggregated_steps$steps, na.rm = T)
+```
+
+The `median`:
+```{r}
+median(aggregated_steps$steps, na.rm = T)
+```
+
+Or to be thorough:
+
+
+```{r}
+kable(describe(aggregated_steps$steps) , 
+      digits = 2 , 
+      align = 'c' , 
+      row.names = F , 
+      caption = "Statistics about aggregated steps")
+
+ggplot(aggregated_steps, aes(x=steps))+geom_density(fill=1, alpha=.3)
+```
+
 
 
 ## What is the average daily activity pattern?
 
+So what does the day look like for our fitbit/jawbone wearing subject? for that, we turn to another `aggregation`!
 
+What we will also do is divide the intervals by *100*, giving us the hours!
+
+```{r}
+interval_agg <- aggregate(data$steps , 
+                          by = list(data$interval) , 
+                          FUN = mean , 
+                          na.rm = T )
+
+names(interval_agg)<-c('interval','steps')
+
+interval_agg$interval <- interval_agg$interval / 100
+
+ggplot(interval_agg, aes(interval,steps))+geom_line()+xlab("hours")+ylab("average steps")+scale_x_continuous(breaks=seq(0,23.55,1))
+
+```
+
+As you may have expected from our plot, our subject is mostly active between 8 and 9. The most active time in terms of steps (on average) is:
+
+```{r}
+interval_agg$interval[interval_agg$steps==max(interval_agg$steps)] # that is: 08:35
+```
 
 ## Imputing missing values
 
+Unfortunately, there are missing values in our dataset.
+
+```{r}
+paste(c("There are",length(data$steps[is.na(data$steps)==T]), "missing."  ), collapse=" ")
+paste(c("Which amounts to",length(data$steps[is.na(data$steps)==T])/length(data$steps)*100,'%'), collapse = " ")
+```
+
+
+We will want to impute some missing values. There are several ways to do this, ranging from [advanced](http://www.jstatsoft.org/v45/i02/paper) to [simple](http://www.r-bloggers.com/example-2014-5-simple-mean-imputation/), but we will be [**generic**](http://svitsrv25.epfl.ch/R-doc/library/Hmisc/html/impute.html). Just think of it as an assumption that the [regression towards the mean](http://en.wikipedia.org/wiki/Regression_toward_the_mean) holds.
+
+```{r}
+aggregated_steps$steps.i <- impute(aggregated_steps$steps, mean, na.rm=T)
+```
+
+So how does that change our estimates?
+
+The `mean` is: 
+
+```{r}
+mean(aggregated_steps$steps.i, na.rm = T)
+```
+
+The `median`:
+```{r}
+median(aggregated_steps$steps.i, na.rm = T)
+```
+
+Or to be thorough:
+
+
+```{r}
+kable(describe(aggregated_steps$steps.i) , 
+      digits = 2 , 
+      align = 'c' , 
+      row.names = F , 
+      caption = "Statistics about aggregated steps")
+
+ggplot(aggregated_steps, aes(x=steps.i))+geom_density(fill=1, alpha=.3)
+```
 
 
 ## Are there differences in activity patterns between weekdays and weekends?
+
+First, let's look at the getting the weekdays.
+
+```{r}
+
+data$weekdays <- weekdays(as.Date(data$date)) # sorry if it's Dutch on you machine... 
+
+```
+
+So, now we aggregate and ecludiate!
+
+```{r}
+weekday_agg_mean <- aggregate(data$steps , by = list(data$weekdays), FUN = mean, na.rm=T)
+weekday_agg_sd <- aggregate(data$steps , by = list(data$weekdays) , FUN = sd, na.rm=T)
+both_weekday <- merge(weekday_agg_mean, weekday_agg_sd, by = "Group.1")
+
+names(both_weekday)<-c("weekday","mean","st.dev")
+both_weekday$weekday<-factor(both_weekday$weekday, levels = c("maandag", "dinsdag","woensdag","donderdag","vrijdag","zaterdag","zondag"))
+summary(both_weekday)
+```
+
+We can now look at the mean number of steps each day
+
+```{r}
+ggplot(both_weekday, aes(x = weekday, y = mean, fill=weekday))+geom_bar(stat="identity")
+```
+
+And the standard deviation (which tells us something about the stress levels of our subject).
+
+```{r}
+ggplot(both_weekday, aes(x=weekday, fill=weekday, y=st.dev))+geom_bar(stat="identity")
+```
+
+Finally, we combine them into two sets and aggregate them by minute. This shows us that generally, during the week steps are limited to the morning rush to work (?) with small spurt during the day. By contrast, the weekend shos activity throughout the day (even before 12:00!) and up to around 24:00.
+
+```{r}
+# split the data by the working-week and weekend
+week <- data[data$weekday %in% c("maandag","dinsdag","woensdag","donderdag","vrijdag"),]
+weekend <- data[!data$weekday %in% c("maandag","dinsdag","woensdag","donderdag","vrijdag"),]
+# Aggregate each dataset by interval
+weekint <- aggregate(week$steps, by = list(week$interval), FUN = mean, na.rm = T)
+weekendint <- aggregate(weekend$steps, by = list(weekend$interval), FUN = mean, na.rm = T)
+# Add distinguishing feature
+weekint$week<- "Week"
+weekendint$week<- "Weekend"
+all <- rbind(weekint,weekendint)
+names(all)<-c("interval","steps","week")
+all$interval <- all$interval / 100
+# Plot the results
+ggplot(all,aes(interval,steps,color=factor(week)))+geom_step()+facet_wrap(~week,nrow=2)
+```
+
